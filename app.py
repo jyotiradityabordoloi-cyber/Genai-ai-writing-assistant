@@ -1,11 +1,15 @@
 import requests
 
 
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "qwen2.5:3b"
+
+
 def ask_ai(prompt):
     response = requests.post(
-        "http://localhost:11434/api/generate",
+        OLLAMA_URL,
         json={
-            "model": "qwen2.5:3b",
+            "model": MODEL_NAME,
             "prompt": prompt,
             "stream": False
         }
@@ -13,9 +17,29 @@ def ask_ai(prompt):
 
     response.raise_for_status()
 
-    result = response.json()
+    return response.json()["response"]
 
-    return result["response"]
+
+def build_prompt(role, task, requirements, text):
+    requirements_text = "\n".join(
+        f"- {requirement}" for requirement in requirements
+    )
+
+    return f"""
+Role:
+{role}
+
+Task:
+{task}
+
+Requirements:
+{requirements_text}
+
+User Text:
+{text}
+
+Response:
+"""
 
 
 def compare_prompts(text):
@@ -25,41 +49,38 @@ Summarize this:
 {text}
 """
 
-    structured_prompt = f"""
-You are an experienced project manager.
+    structured_prompt = build_prompt(
+        role="You are an experienced project manager.",
+        task="Analyze the following project update.",
+        requirements=[
+            "Identify the main issue.",
+            "Identify the impact.",
+            "Identify the next action.",
+            "Use concise bullet points.",
+            "Do not invent information."
+        ],
+        text=text
+    )
 
-Task:
-Analyze the following project update.
-
-Requirements:
-- Identify the main issue.
-- Identify the impact.
-- Identify the next action.
-- Use concise bullet points.
-- Do not invent information.
-
-Project update:
-{text}
-"""
-
-    print("\nGenerating response using basic prompt...")
+    print("\nGenerating basic prompt response...")
     basic_result = ask_ai(basic_prompt)
 
-    print("Generating response using structured prompt...")
+    print("Generating structured prompt response...")
     structured_result = ask_ai(structured_prompt)
 
     print("\n" + "=" * 60)
-    print("BASIC PROMPT RESULT")
+    print("BASIC PROMPT")
     print("=" * 60)
     print(basic_result)
 
     print("\n" + "=" * 60)
-    print("STRUCTURED PROMPT RESULT")
+    print("STRUCTURED PROMPT")
     print("=" * 60)
     print(structured_result)
 
 
 def main():
+
     print("=" * 60)
     print("              AI WRITING ASSISTANT")
     print("=" * 60)
@@ -77,117 +98,97 @@ def main():
     choice = input("\nEnter your choice (1-7): ")
     text = input("\nEnter your text:\n")
 
-    prompts = {
-        "1": f"""
-You are a professional summarization assistant.
+    prompt_configs = {
 
-Task:
-Summarize the following text.
+        "1": {
+            "role": "You are a professional summarization assistant.",
+            "task": "Summarize the provided text.",
+            "requirements": [
+                "Provide exactly 3 bullet points.",
+                "Focus on the most important information.",
+                "Keep each bullet concise.",
+                "Do not add information not present in the text."
+            ]
+        },
 
-Requirements:
-- Provide exactly 3 bullet points.
-- Focus only on the most important information.
-- Keep each bullet concise.
-- Do not introduce information that is not present.
+        "2": {
+            "role": "You are an expert teacher.",
+            "task": "Explain the provided text in simple language.",
+            "requirements": [
+                "Assume the reader is a beginner.",
+                "Explain difficult concepts clearly.",
+                "Avoid unnecessary technical terminology.",
+                "Do not change the original meaning."
+            ]
+        },
 
-Text:
-{text}
-""",
+        "3": {
+            "role": "You are a professional writing assistant.",
+            "task": "Rewrite the provided text while preserving its meaning.",
+            "requirements": [
+                "Improve grammar.",
+                "Improve clarity.",
+                "Improve readability.",
+                "Do not add new information."
+            ]
+        },
 
-        "2": f"""
-You are an expert teacher.
+        "4": {
+            "role": "You are a professional business communication assistant.",
+            "task": "Rewrite the provided text in a professional and polished tone.",
+            "requirements": [
+                "Keep the original meaning.",
+                "Use clear business language.",
+                "Be concise.",
+                "Do not invent information."
+            ]
+        },
 
-Task:
-Explain the following text in simple language.
+        "5": {
+            "role": "You are a communication assistant.",
+            "task": "Rewrite the provided text using simple language.",
+            "requirements": [
+                "Use short sentences.",
+                "Avoid unnecessary technical terms.",
+                "Preserve the original meaning.",
+                "Make the text easy to understand."
+            ]
+        },
 
-Requirements:
-- Assume the reader is a beginner.
-- Explain difficult concepts clearly.
-- Avoid unnecessary technical terminology.
-- Do not change the meaning.
-
-Text:
-{text}
-""",
-
-        "3": f"""
-You are a professional writing assistant.
-
-Task:
-Rewrite the following text while preserving its original meaning.
-
-Requirements:
-- Improve grammar.
-- Improve clarity.
-- Improve readability.
-- Do not add new information.
-
-Text:
-{text}
-""",
-
-        "4": f"""
-You are a professional business communication assistant.
-
-Task:
-Rewrite the following text in a professional and polished tone.
-
-Requirements:
-- Keep the original meaning.
-- Use clear business language.
-- Be concise.
-- Do not invent information.
-
-Text:
-{text}
-""",
-
-        "5": f"""
-You are a communication assistant.
-
-Task:
-Rewrite the following text using simple language.
-
-Requirements:
-- Use short sentences.
-- Avoid unnecessary technical terms.
-- Preserve the original meaning.
-- Make the text easy to understand.
-
-Text:
-{text}
-""",
-
-        "6": f"""
-You are an information extraction assistant.
-
-Task:
-Extract the most important information from the following text.
-
-Requirements:
-- Return concise bullet points.
-- Focus on important facts and decisions.
-- Do not add information.
-- Remove unnecessary details.
-
-Text:
-{text}
-"""
+        "6": {
+            "role": "You are an information extraction assistant.",
+            "task": "Extract the most important information from the provided text.",
+            "requirements": [
+                "Return concise bullet points.",
+                "Focus on important facts and decisions.",
+                "Do not add information.",
+                "Remove unnecessary details."
+            ]
+        }
     }
-
-    if choice not in prompts and choice != "7":
-        print("\nInvalid choice. Please select 1-7.")
-        return
 
     if choice == "7":
         print("\nRunning prompt engineering experiment...")
         compare_prompts(text)
         return
 
+    if choice not in prompt_configs:
+        print("\nInvalid choice. Please select 1-7.")
+        return
+
+    config = prompt_configs[choice]
+
+    prompt = build_prompt(
+        role=config["role"],
+        task=config["task"],
+        requirements=config["requirements"],
+        text=text
+    )
+
     print("\nGenerating AI response...")
     print("-" * 60)
 
-    result = ask_ai(prompts[choice])
+    result = ask_ai(prompt)
 
     print("\nAI Response:")
     print("-" * 60)
