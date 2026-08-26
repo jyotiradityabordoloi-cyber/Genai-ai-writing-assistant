@@ -2,17 +2,12 @@ import requests
 import streamlit as st
 
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
-
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5:3b"
 
 
-# ==========================================
 # STREAMLIT PAGE
-# ==========================================
+
 
 st.set_page_config(
     page_title="AI Writing Assistant",
@@ -88,14 +83,14 @@ text = st.text_area(
 
 
 # ==========================================
-# WORD COUNTER
+# INPUT STATISTICS
 # ==========================================
 
 word_count = len(text.split())
 character_count = len(text)
 
 st.caption(
-    f"📝 {word_count} words · {character_count} characters"
+    f"📝 Input: {word_count} words · {character_count} characters"
 )
 
 
@@ -207,7 +202,7 @@ def generate_response(prompt):
 
 
 # ==========================================
-# GENERATE BUTTON
+# GENERATE
 # ==========================================
 
 if st.button("✨ Generate", type="primary"):
@@ -231,11 +226,8 @@ if st.button("✨ Generate", type="primary"):
 
                 result = generate_response(prompt)
 
-                st.divider()
-
-                st.subheader("AI Response")
-
-                st.write(result)
+                st.session_state["result"] = result
+                st.session_state["prompt"] = prompt
 
             except requests.exceptions.ConnectionError:
 
@@ -256,3 +248,43 @@ if st.button("✨ Generate", type="primary"):
                 st.error(
                     f"Something went wrong: {error}"
                 )
+
+
+# ==========================================
+# DISPLAY RESPONSE
+# ==========================================
+
+if "result" in st.session_state:
+
+    result = st.session_state["result"]
+
+    st.divider()
+
+    st.subheader("🤖 AI Response")
+
+    st.write(result)
+
+    # Output statistics
+    output_words = len(result.split())
+    output_characters = len(result)
+
+    st.caption(
+        f"📊 Output: {output_words} words · "
+        f"{output_characters} characters"
+    )
+
+    # Download response
+    st.download_button(
+        label="💾 Download Response",
+        data=result,
+        file_name="ai_response.txt",
+        mime="text/plain"
+    )
+
+    # Show prompt
+    with st.expander("🔍 Show Generated Prompt"):
+
+        st.code(
+            st.session_state["prompt"],
+            language="text"
+        )
