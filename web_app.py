@@ -1,21 +1,21 @@
-import json
-import requests
 import streamlit as st
+import requests
+import numpy as np
 from pypdf import PdfReader
+from sentence_transformers import SentenceTransformer
 
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
+# ============================================================
+# CONFIG
+# ============================================================
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5:3b"
-MAX_CHARACTERS = 10000
+MODEL_NAME = "qwen2.5:3b"
 
 
-# =========================================================
-# PAGE CONFIGURATION
-# =========================================================
+# ============================================================
+# PAGE CONFIG
+# ============================================================
 
 st.set_page_config(
     page_title="AI Writing Assistant",
@@ -24,78 +24,472 @@ st.set_page_config(
 )
 
 
-# =========================================================
-# CUSTOM CSS
-# =========================================================
+# ============================================================
+# EMBEDDING MODEL
+# ============================================================
 
-st.markdown(
-    """
-    <style>
+@st.cache_resource
+def load_embedding_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
-    .main-title {
-        font-size: 46px;
-        font-weight: 700;
-        margin-bottom: 5px;
+
+embedding_model = load_embedding_model()
+
+
+# ============================================================
+# OLLAMA
+# ============================================================
+
+def ask_ollama(prompt, temperature=0.7):
+
+    try:
+
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL_NAME,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": temperature
+                }
+            },
+            timeout=120
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        return data.get("response", "").strip()
+
+    except requests.exceptions.ConnectionError:
+
+        return (
+            "Could not connect to Ollama. "
+            "Please make sure Ollama is running."
+        )
+
+    except requests.exceptions.Timeout:
+
+        return (
+            "The request took too long. "
+            "Please try again."
+        )
+
+    except Exception as e:
+
+        return f"Error: {str(e)}"
+
+
+# ============================================================
+# PAGE-AWARE CHUNKING
+# ============================================================
+
+def create_page_chunks(
+    page_text,
+    page_number,
+    chunk_size=800,
+    overlap=100
+):
+
+    words = page_text.split()
+
+    chunks = []
+
+    start = 0
+
+    while start < len(words):
+
+        end = start + chunk_size
+
+        chunk_text = " ".join(
+            words[start:end]
+        )
+
+        if chunk_text.strip():
+
+            chunks.append(
+                {
+                    "text": chunk_text.strip(),
+                    "page": page_number
+                }
+            )
+
+        start += chunk_size - overlap
+
+    return chunks
+
+
+# ============================================================
+# BUILD DOCUMENT CHUNKS
+# ============================================================
+
+def process_pdf(uploaded_file):
+
+    reader = PdfReader(uploaded_file)
+
+    all_chunks = []
+
+    pages_with_text = 0
+
+    for page_number, page in enumerate(
+        reader.pages,
+        start=1
+    ):
+
+        page_text = page.extract_text()
+
+        if not page_text:
+            continue
+
+        page_text = page_text.strip()
+
+        if not page_text:
+            continue
+
+        pages_with_text += 1
+
+        page_chunks = create_page_chunks(
+            page_text=page_text,
+            page_number=page_number,
+            chunk_size=800,
+            overlap=100
+        )
+
+        all_chunks.extend(page_chunks)
+
+    return reader, all_chunks, pages_with_text
+
+
+# ============================================================
+# COSINE SIMILARITY
+# ============================================================
+
+def cosine_similarity(
+    query_embedding,
+    document_embeddings
+):
+
+    query_embedding = query_embedding / (
+        np.linalg.norm(query_embedding) + 1e-10
+    )
+
+    document_embeddings = (
+        document_embeddings /
+        (
+            np.linalg.norm(
+                document_embeddings,
+                axis=1,
+                keepdims=True
+            ) + 1e-10
+        )
+    )
+
+    scores = np.dot(
+        document_embeddings,
+        query_embedding
+    )
+
+    return scores
+
+
+# ============================================================
+# RETRIEVE RELEVANT CHUNKS
+# ============================================================
+
+def retrieve_chunks(
+    question,
+    chunks,
+    embeddings,
+    top_k=3
+):
+
+    question_embedding = embedding_model.encode(
+        question,
+        convert_to_numpy=True
+    )
+
+    scores = cosine_similarity(
+        question_embedding,
+        embeddings
+    )
+
+    top_indices = np.argsort(scores)[::-1][:top_k]
+
+    results = []
+
+    for index in top_indices:
+
+        results.append(
+            {
+                "text": chunks[index]["text"],
+                "page": chunks[index]["page"],
+                "score": float(scores[index]),
+                "index": int(index)
+            }
+        )
+
+    return results
+
+
+# ============================================================
+# PLATFORM INSTRUCTIONS
+# ============================================================
+
+PLATFORM_INSTRUCTIONS = {
+
+    "LinkedIn Post": """
+Create content suitable for LinkedIn.
+
+Use:
+- A strong opening
+- Short paragraphs
+- Professional but natural language
+- A useful takeaway
+- Good readability
+
+Avoid:
+- Excessive hashtags
+- Generic corporate language
+- Unnecessary emojis
+""",
+
+    "Instagram Caption": """
+Create content suitable for an Instagram caption.
+
+Use:
+- An engaging opening
+- Short readable paragraphs
+- Conversational language
+- Emojis where appropriate
+- A call to action when useful
+""",
+
+    "X (Twitter) Post": """
+Create content suitable for X/Twitter.
+
+Use:
+- Concise wording
+- Strong opening
+- Short sentences
+- Clear message
+
+Remove unnecessary explanations.
+""",
+
+    "Blog Article": """
+Create content suitable for a blog article.
+
+Use:
+- Clear title
+- Introduction
+- Logical headings
+- Well-developed sections
+- Examples where useful
+- Conclusion
+""",
+
+    "Email": """
+Create content suitable for an email.
+
+Use:
+- Subject line
+- Greeting
+- Clear body
+- Professional structure
+- Appropriate closing
+""",
+
+    "YouTube Description": """
+Create content suitable for a YouTube description.
+
+Use:
+- Strong opening
+- Brief explanation
+- Useful details
+- Clear structure
+- Relevant keywords naturally
+""",
+
+    "Product Description": """
+Create a clear and persuasive product description.
+
+Focus on:
+- What the product is
+- Main benefits
+- Important features
+- Customer value
+
+Avoid exaggerated or unsupported claims.
+""",
+
+    "Professional / Business Writing": """
+Create polished professional or business writing.
+
+Use:
+- Clear language
+- Professional structure
+- Direct communication
+- Appropriate business tone
+"""
+}
+
+
+# ============================================================
+# WRITING PROMPT
+# ============================================================
+
+def build_writing_prompt(
+    task,
+    text,
+    tone,
+    length,
+    publish_platform,
+    custom_instruction
+):
+
+    length_instructions = {
+
+        "Short":
+            "Keep the output concise and focused.",
+
+        "Medium":
+            "Provide a balanced amount of detail.",
+
+        "Long":
+            "Provide detailed and well-developed content."
     }
 
-    .subtitle {
-        font-size: 18px;
-        color: #9ca3af;
-        margin-bottom: 28px;
+    task_instructions = {
+
+        "Summarize": """
+Summarize the provided text.
+
+Keep the most important information.
+Remove unnecessary repetition.
+Do not introduce information that is not in the original text.
+""",
+
+        "Rewrite": """
+Rewrite the provided text to make it clearer,
+more natural and effective.
+
+Preserve the original meaning.
+""",
+
+        "Improve Grammar": """
+Improve grammar, spelling, punctuation,
+sentence structure and clarity.
+
+Do not change the intended meaning.
+""",
+
+        "Change Tone": f"""
+Rewrite the text using a {tone} tone.
+
+Preserve the original meaning.
+""",
+
+        "Expand": """
+Expand the provided text with useful information.
+
+Keep the original meaning and topic.
+Do not add unsupported facts.
+""",
+
+        "Extract Key Points": """
+Extract the most important points from the text.
+
+Use clear bullet points.
+""",
+
+        "Compare Prompt Quality": """
+Analyze the text as an AI prompt.
+
+Evaluate:
+
+1. Clarity
+2. Context
+3. Specificity
+4. Expected output
+5. Missing information
+6. Potential improvements
+
+Provide practical recommendations.
+"""
     }
 
-    .section-title {
-        font-size: 28px;
-        font-weight: 650;
-        margin-top: 10px;
-        margin-bottom: 5px;
-    }
+    prompt = f"""
+You are an AI writing assistant.
 
-    .section-description {
-        color: #9ca3af;
-        margin-bottom: 20px;
-    }
+TASK:
 
-    .result-box {
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #3a3a45;
-        background-color: #171821;
-    }
+{task_instructions[task]}
 
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+TONE:
+
+{tone}
+
+LENGTH:
+
+{length_instructions[length]}
+
+SOURCE TEXT:
+
+{text}
+"""
+
+    if publish_platform != "No specific platform":
+
+        platform_instruction = PLATFORM_INSTRUCTIONS.get(
+            publish_platform,
+            ""
+        )
+
+        prompt += f"""
+
+PUBLISHING / FORMAT:
+
+Optimize the output for:
+
+{publish_platform}
+
+Requirements:
+
+{platform_instruction}
+"""
+
+    if custom_instruction.strip():
+
+        prompt += f"""
+
+ADDITIONAL USER INSTRUCTION:
+
+{custom_instruction}
+"""
+
+    prompt += """
+
+Return only the useful final answer.
+
+Do not explain your reasoning.
+Do not mention these instructions.
+"""
+
+    return prompt
 
 
-# =========================================================
-# HEADER
-# =========================================================
-
-st.markdown(
-    '<div class="main-title">🤖 AI Writing Assistant</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitle">'
-    'Transform, rewrite and analyze text with AI.'
-    '</div>',
-    unsafe_allow_html=True
-)
-
-
-# =========================================================
+# ============================================================
 # SIDEBAR
-# =========================================================
+# ============================================================
 
 with st.sidebar:
 
     st.header("⚙️ AI Controls")
 
-    temperature = st.slider(
-        "🌡️ Creativity",
+    creativity = st.slider(
+        "🎨 Creativity",
         min_value=0.0,
         max_value=1.0,
         value=0.7,
@@ -106,22 +500,27 @@ with st.sidebar:
 
     st.subheader("Model")
 
-    st.code(
-        MODEL,
-        language="text"
-    )
+    st.code(MODEL_NAME)
 
-    st.caption("Runtime")
+    st.subheader("Runtime")
 
-    st.code(
-        "Ollama (Local)",
-        language="text"
-    )
+    st.info("Ollama (Local)")
 
 
-# =========================================================
+# ============================================================
+# HEADER
+# ============================================================
+
+st.title("🤖 AI Writing Assistant")
+
+st.write(
+    "Transform, rewrite and analyze text with AI."
+)
+
+
+# ============================================================
 # TABS
-# =========================================================
+# ============================================================
 
 writing_tab, document_tab = st.tabs(
     [
@@ -131,766 +530,450 @@ writing_tab, document_tab = st.tabs(
 )
 
 
-# =========================================================
-# OLLAMA STREAMING FUNCTION
-# =========================================================
-
-def stream_response(prompt, temperature):
-
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": MODEL,
-            "prompt": prompt,
-            "temperature": temperature,
-            "stream": True
-        },
-        stream=True,
-        timeout=120
-    )
-
-    response.raise_for_status()
-
-    for line in response.iter_lines():
-
-        if not line:
-            continue
-
-        try:
-
-            data = json.loads(
-                line.decode("utf-8")
-            )
-
-            chunk = data.get(
-                "response",
-                ""
-            )
-
-            if chunk:
-                yield chunk
-
-            if data.get("done", False):
-                break
-
-        except json.JSONDecodeError:
-
-            continue
-
-
-# =========================================================
+# ============================================================
 # WRITING ASSISTANT
-# =========================================================
+# ============================================================
 
 with writing_tab:
 
-    st.markdown(
-        '<div class="section-title">'
-        '✍️ Writing Assistant'
-        '</div>',
-        unsafe_allow_html=True
+    st.header("✍️ Writing Assistant")
+
+    st.write(
+        "Transform your text for different purposes and platforms."
     )
 
-    st.markdown(
-        '<div class="section-description">'
-        'Write, rewrite and improve your content.'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-
-    # =====================================================
-    # AI TASK
-    # =====================================================
+    # --------------------------------------------------------
+    # TASK
+    # --------------------------------------------------------
 
     task = st.selectbox(
-        "🎯 What do you want AI to do?",
+        "Choose an AI task",
         [
             "Summarize",
-            "Explain",
             "Rewrite",
-            "Make Professional",
-            "Simplify",
-            "Extract Key Points"
-        ],
-        key="writing_task"
+            "Improve Grammar",
+            "Change Tone",
+            "Expand",
+            "Extract Key Points",
+            "Compare Prompt Quality"
+        ]
     )
 
+    # --------------------------------------------------------
+    # TONE + LENGTH
+    # --------------------------------------------------------
 
-    # =====================================================
-    # WRITING PURPOSE
-    # =====================================================
+    col1, col2 = st.columns(2)
 
-    purpose = st.selectbox(
-        "🎯 What is the purpose?",
-        [
-            "General",
-            "Inform",
-            "Persuade",
-            "Request",
-            "Follow Up",
-            "Announce",
-            "Apologize",
-            "Thank",
-            "Respond",
-            "Sell",
-            "Explain"
-        ],
-        key="writing_purpose"
-    )
+    with col1:
 
-
-    # =====================================================
-    # PLATFORM
-    # =====================================================
-
-    platform = st.selectbox(
-        "📍 Where will you use this?",
-        [
-            "General",
-            "Email",
-            "LinkedIn",
-            "WhatsApp",
-            "Slack",
-            "Business Report",
-            "Resume",
-            "Cover Letter",
-            "Presentation",
-            "Blog",
-            "Marketing",
-            "Academic"
-        ],
-        key="writing_platform"
-    )
-
-
-    # =====================================================
-    # WRITING STYLE
-    # =====================================================
-
-    writing_style = st.selectbox(
-        "✍️ Writing style",
-        [
-            "General",
-            "Professional",
-            "Conversational",
-            "Business",
-            "Storytelling",
-            "Academic",
-            "Marketing",
-            "Technical",
-            "Executive"
-        ],
-        key="writing_style"
-    )
-
-
-    # =====================================================
-    # TONE
-    # =====================================================
-
-    tone = st.selectbox(
-        "🎨 Tone",
-        [
-            "Professional",
-            "Friendly",
-            "Casual",
-            "Formal",
-            "Academic",
-            "Persuasive",
-            "Confident",
-            "Empathetic",
-            "Direct"
-        ],
-        key="writing_tone"
-    )
-
-
-    # =====================================================
-    # RESPONSE LENGTH
-    # =====================================================
-
-    length = st.selectbox(
-        "📏 Response length",
-        [
-            "Short",
-            "Medium",
-            "Detailed"
-        ],
-        key="writing_length"
-    )
-
-
-    # =====================================================
-    # INPUT
-    # =====================================================
-
-    text = st.text_area(
-        "📝 Enter your text",
-        height=250,
-        placeholder="Paste or type your text here...",
-        key="writing_text"
-    )
-
-
-    word_count = len(text.split())
-    character_count = len(text)
-
-
-    st.caption(
-        f"📝 Input: {word_count} words · "
-        f"{character_count:,} characters"
-    )
-
-
-    if character_count > MAX_CHARACTERS:
-
-        st.warning(
-            f"⚠️ Please keep your input below "
-            f"{MAX_CHARACTERS:,} characters."
+        tone = st.selectbox(
+            "Tone",
+            [
+                "Professional",
+                "Friendly",
+                "Formal",
+                "Casual",
+                "Confident",
+                "Simple"
+            ]
         )
 
+    with col2:
 
-    # =====================================================
-    # PROMPT BUILDER
-    # =====================================================
+        length = st.selectbox(
+            "Length",
+            [
+                "Short",
+                "Medium",
+                "Long"
+            ]
+        )
 
-    def create_writing_prompt(
-        task,
-        purpose,
-        platform,
-        writing_style,
-        tone,
-        length,
-        text
-    ):
+    # --------------------------------------------------------
+    # INPUT
+    # --------------------------------------------------------
 
-        platform_instructions = {
+    text = st.text_area(
+        "Enter your text",
+        height=250,
+        placeholder="Paste your text here..."
+    )
 
-            "General":
-                "Use a clear and natural format.",
+    # --------------------------------------------------------
+    # OPTIONAL PUBLISHING
+    # --------------------------------------------------------
 
-            "Email":
-                "Format the response as a professional email.",
+    st.subheader("📣 Publishing / Format")
 
-            "LinkedIn":
-                "Format the response as an engaging LinkedIn post.",
+    st.caption(
+        "Optional — choose a platform only if you want "
+        "the output optimized for it."
+    )
 
-            "WhatsApp":
-                "Make the response natural and suitable for WhatsApp.",
+    publish_platform = st.selectbox(
+        "Where will you publish this? (Optional)",
+        [
+            "No specific platform",
+            "LinkedIn Post",
+            "Instagram Caption",
+            "X (Twitter) Post",
+            "Blog Article",
+            "Email",
+            "YouTube Description",
+            "Product Description",
+            "Professional / Business Writing"
+        ]
+    )
 
-            "Slack":
-                "Make the response concise and suitable for workplace Slack.",
+    # --------------------------------------------------------
+    # ADDITIONAL INSTRUCTION
+    # --------------------------------------------------------
 
-            "Business Report":
-                "Use a structured business-report format.",
+    custom_instruction = st.text_input(
+        "Additional instruction (optional)",
+        placeholder=(
+            "Example: Make it more engaging"
+        )
+    )
 
-            "Resume":
-                "Use concise, achievement-oriented resume language.",
-
-            "Cover Letter":
-                "Use a professional cover-letter format.",
-
-            "Presentation":
-                "Make the response suitable for presentation content.",
-
-            "Blog":
-                "Use an engaging and readable blog format.",
-
-            "Marketing":
-                "Use persuasive marketing language.",
-
-            "Academic":
-                "Use a formal academic writing format."
-        }
-
-
-        style_instructions = {
-
-            "General":
-                "Use clear and natural language.",
-
-            "Professional":
-                "Use polished professional language.",
-
-            "Conversational":
-                "Use natural conversational language.",
-
-            "Business":
-                "Use business-oriented language.",
-
-            "Storytelling":
-                "Use an engaging storytelling style.",
-
-            "Academic":
-                "Use formal academic language.",
-
-            "Marketing":
-                "Use persuasive and engaging language.",
-
-            "Technical":
-                "Use precise technical language.",
-
-            "Executive":
-                "Use concise executive-level communication."
-        }
-
-
-        length_instructions = {
-
-            "Short":
-                "Keep the response concise.",
-
-            "Medium":
-                "Provide a balanced response.",
-
-            "Detailed":
-                "Provide a detailed response."
-        }
-
-
-        prompt = f"""
-You are an expert AI writing assistant.
-
-TASK:
-{task}
-
-PURPOSE:
-{purpose}
-
-PLATFORM:
-{platform}
-
-PLATFORM INSTRUCTION:
-{platform_instructions[platform]}
-
-WRITING STYLE:
-{writing_style}
-
-STYLE INSTRUCTION:
-{style_instructions[writing_style]}
-
-TONE:
-{tone}
-
-RESPONSE LENGTH:
-{length}
-
-LENGTH INSTRUCTION:
-{length_instructions[length]}
-
-IMPORTANT:
-- Preserve the original meaning.
-- Do not invent facts.
-- Follow the requested platform.
-- Follow the requested tone.
-- Make the result clear and useful.
-
-USER TEXT:
-{text}
-
-FINAL RESPONSE:
-"""
-
-        return prompt.strip()
-
-
-    # =====================================================
+    # --------------------------------------------------------
     # GENERATE
-    # =====================================================
+    # --------------------------------------------------------
 
-    if st.button(
+    generate = st.button(
         "✨ Generate",
-        type="primary",
-        use_container_width=True,
-        key="generate_writing"
-    ):
+        type="primary"
+    )
+
+    if generate:
 
         if not text.strip():
 
             st.warning(
-                "⚠️ Please enter some text first."
-            )
-
-        elif character_count > MAX_CHARACTERS:
-
-            st.error(
-                "❌ Input is too long."
+                "Please enter some text first."
             )
 
         else:
 
-            prompt = create_writing_prompt(
-                task,
-                purpose,
-                platform,
-                writing_style,
-                tone,
-                length,
-                text
+            prompt = build_writing_prompt(
+                task=task,
+                text=text,
+                tone=tone,
+                length=length,
+                publish_platform=publish_platform,
+                custom_instruction=custom_instruction
             )
 
-            st.divider()
+            with st.spinner("Generating..."):
 
-            st.subheader(
-                "🤖 AI Response"
-            )
-
-            try:
-
-                result = st.write_stream(
-                    stream_response(
-                        prompt,
-                        temperature
-                    )
+                result = ask_ollama(
+                    prompt,
+                    temperature=creativity
                 )
 
-                st.session_state[
-                    "writing_result"
-                ] = result
+            st.subheader("Result")
 
-                st.session_state[
-                    "writing_prompt"
-                ] = prompt
-
-            except requests.exceptions.ConnectionError:
-
-                st.error(
-                    "❌ Could not connect to Ollama. "
-                    "Make sure Ollama is running."
-                )
-
-            except requests.exceptions.Timeout:
-
-                st.error(
-                    "⏱️ The request took too long."
-                )
-
-            except Exception as error:
-
-                st.error(
-                    f"❌ Something went wrong: {error}"
-                )
+            st.write(result)
 
 
-    # =====================================================
-    # RESULT
-    # =====================================================
-
-    if "writing_result" in st.session_state:
-
-        result = st.session_state[
-            "writing_result"
-        ]
-
-        st.divider()
-
-        st.subheader(
-            "📄 Result"
-        )
-
-        output_words = len(
-            result.split()
-        )
-
-        st.caption(
-            f"📊 Output: {output_words} words"
-        )
-
-        st.markdown(
-            '<div class="result-box">',
-            unsafe_allow_html=True
-        )
-
-        st.write(result)
-
-        st.markdown(
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-
-        st.download_button(
-            "💾 Download Response",
-            data=result,
-            file_name="ai_response.txt",
-            mime="text/plain",
-            use_container_width=True,
-            key="download_writing"
-        )
-
-
-        with st.expander(
-            "🔍 Show Generated Prompt"
-        ):
-
-            st.code(
-                st.session_state[
-                    "writing_prompt"
-                ],
-                language="text"
-            )
-
-
-# =========================================================
+# ============================================================
 # DOCUMENT AI
-# =========================================================
+# ============================================================
 
 with document_tab:
 
-    st.markdown(
-        '<div class="section-title">'
-        '📄 Document AI'
-        '</div>',
-        unsafe_allow_html=True
+    st.header("📄 Document AI")
+
+    st.write(
+        "Upload a PDF and ask questions about its content."
     )
 
-    st.markdown(
-        '<div class="section-description">'
-        'Upload a PDF and analyze its contents with AI.'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-
-    # =====================================================
-    # PDF UPLOAD
-    # =====================================================
+    # --------------------------------------------------------
+    # UPLOAD
+    # --------------------------------------------------------
 
     uploaded_file = st.file_uploader(
         "📤 Upload a PDF",
-        type=["pdf"],
-        key="pdf_upload"
+        type=["pdf"]
     )
 
-
-    if uploaded_file:
+    if uploaded_file is not None:
 
         try:
 
-            reader = PdfReader(
+            reader, chunks, pages_with_text = process_pdf(
                 uploaded_file
             )
 
-            page_count = len(
-                reader.pages
-            )
-
-
-            # =================================================
-            # EXTRACT TEXT
-            # =================================================
-
-            extracted_text = ""
-
-            with st.spinner(
-                "📖 Reading document..."
-            ):
-
-                for page in reader.pages:
-
-                    page_text = page.extract_text()
-
-                    if page_text:
-
-                        extracted_text += (
-                            page_text + "\n"
-                        )
-
-
-            # =================================================
-            # DOCUMENT STATISTICS
-            # =================================================
-
-            document_word_count = len(
-                extracted_text.split()
-            )
-
-            document_character_count = len(
-                extracted_text
-            )
-
-
             st.success(
-                f"✅ PDF loaded successfully — "
-                f"{page_count} pages"
+                f"PDF loaded successfully — "
+                f"{len(reader.pages)} pages"
             )
 
+        except Exception as e:
+
+            st.error(
+                f"Could not read PDF: {str(e)}"
+            )
+
+            chunks = []
+
+        # ----------------------------------------------------
+        # DOCUMENT
+        # ----------------------------------------------------
+
+        if chunks:
 
             col1, col2, col3 = st.columns(3)
-
 
             with col1:
 
                 st.metric(
-                    "Pages",
-                    page_count
+                    "PDF Pages",
+                    len(reader.pages)
                 )
-
 
             with col2:
 
                 st.metric(
-                    "Words",
-                    document_word_count
+                    "Pages With Text",
+                    pages_with_text
                 )
-
 
             with col3:
 
                 st.metric(
-                    "Characters",
-                    f"{document_character_count:,}"
+                    "Text Chunks",
+                    len(chunks)
                 )
 
+            # ------------------------------------------------
+            # VIEW CHUNKS
+            # ------------------------------------------------
 
-            # =================================================
-            # EXTRACTED TEXT
-            # =================================================
-
-            st.divider()
-
-            st.subheader(
-                "📖 Extracted Text"
-            )
-
-
-            st.text_area(
-                "Document content",
-                value=extracted_text,
-                height=400,
-                key="extracted_document_text"
-            )
-
-
-            # =================================================
-            # DOWNLOAD TEXT
-            # =================================================
-
-            st.download_button(
-                "💾 Download Extracted Text",
-                data=extracted_text,
-                file_name="extracted_text.txt",
-                mime="text/plain",
-                use_container_width=True,
-                key="download_extracted_text"
-            )
-
-
-            # =================================================
-            # SAVE DOCUMENT
-            # =================================================
-
-            st.session_state[
-                "document_text"
-            ] = extracted_text
-
-
-            # =================================================
-            # TEXT CHUNKING
-            # =================================================
-
-            def split_text_into_chunks(
-                text,
-                chunk_size=500,
-                overlap=50
+            with st.expander(
+                "📦 View document chunks"
             ):
-                """
-                Split document text into
-                overlapping chunks.
-                """
 
-                words = text.split()
+                for i, chunk in enumerate(chunks):
 
-                chunks = []
-
-                start = 0
-
-                while start < len(words):
-
-                    end = start + chunk_size
-
-                    chunk = " ".join(
-                        words[start:end]
+                    st.markdown(
+                        f"**Chunk {i + 1} — Page "
+                        f"{chunk['page']}**"
                     )
 
-                    if chunk.strip():
-
-                        chunks.append(
-                            chunk
-                        )
-
-                    start += (
-                        chunk_size - overlap
+                    st.write(
+                        chunk["text"]
                     )
 
-                return chunks
+                    st.divider()
 
+            # ------------------------------------------------
+            # EMBEDDINGS
+            # ------------------------------------------------
 
-            # =================================================
-            # CREATE CHUNKS
-            # =================================================
+            with st.spinner(
+                "Creating document embeddings..."
+            ):
 
-            chunks = split_text_into_chunks(
-                extracted_text,
-                chunk_size=500,
-                overlap=50
-            )
+                chunk_texts = [
+                    chunk["text"]
+                    for chunk in chunks
+                ]
 
+                embeddings = embedding_model.encode(
+                    chunk_texts,
+                    convert_to_numpy=True,
+                    show_progress_bar=False
+                )
 
-            st.session_state[
-                "document_chunks"
-            ] = chunks
-
-
-            # =================================================
-            # DISPLAY CHUNKS
-            # =================================================
-
-            st.divider()
-
-            st.subheader(
-                "🧩 Document Chunks"
+            st.success(
+                "Document embeddings created successfully."
             )
 
             st.caption(
-                f"Created {len(chunks)} chunks."
+                f"Embedding shape: {embeddings.shape}"
             )
 
+            # ------------------------------------------------
+            # QUESTION
+            # ------------------------------------------------
 
-            for index, chunk in enumerate(
-                chunks
-            ):
+            st.divider()
 
-                with st.expander(
-                    f"Chunk {index + 1}"
-                ):
-
-                    st.write(chunk)
-
-
-        except Exception as error:
-
-            st.error(
-                f"❌ Could not process the PDF: "
-                f"{error}"
+            st.subheader(
+                "🔎 Ask Your Document"
             )
 
+            question = st.text_input(
+                "Ask a question about the PDF",
+                placeholder=(
+                    "Example: What is the main topic "
+                    "of this document?"
+                )
+            )
 
-# =========================================================
-# FOOTER
-# =========================================================
+            top_k = st.slider(
+                "Number of relevant chunks",
+                min_value=1,
+                max_value=min(5, len(chunks)),
+                value=min(3, len(chunks))
+            )
 
-st.markdown(
-    """
-    <div style="
-        text-align:center;
-        color:#777;
-        font-size:0.8rem;
-        margin-top:40px;
-    ">
-        Built with Python · Streamlit · Ollama · Qwen
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+            ask_question = st.button(
+                "🔍 Search & Answer",
+                type="primary"
+            )
+
+            if ask_question:
+
+                if not question.strip():
+
+                    st.warning(
+                        "Please enter a question."
+                    )
+
+                else:
+
+                    # ----------------------------------------
+                    # RETRIEVAL
+                    # ----------------------------------------
+
+                    with st.spinner(
+                        "Searching the document..."
+                    ):
+
+                        results = retrieve_chunks(
+                            question,
+                            chunks,
+                            embeddings,
+                            top_k
+                        )
+
+                    # ----------------------------------------
+                    # SOURCES
+                    # ----------------------------------------
+
+                    st.subheader(
+                        "📚 Retrieved Sources"
+                    )
+
+                    source_pages = sorted(
+                        set(
+                            result["page"]
+                            for result in results
+                        )
+                    )
+
+                    st.write(
+                        "Relevant pages: "
+                        + ", ".join(
+                            f"Page {page}"
+                            for page in source_pages
+                        )
+                    )
+
+                    # ----------------------------------------
+                    # RETRIEVED CHUNKS
+                    # ----------------------------------------
+
+                    with st.expander(
+                        "View retrieved content"
+                    ):
+
+                        for result in results:
+
+                            st.markdown(
+                                f"**Page "
+                                f"{result['page']}**"
+                            )
+
+                            st.caption(
+                                f"Similarity score: "
+                                f"{result['score']:.3f}"
+                            )
+
+                            st.write(
+                                result["text"]
+                            )
+
+                            st.divider()
+
+                    # ----------------------------------------
+                    # BUILD CONTEXT
+                    # ----------------------------------------
+
+                    context_parts = []
+
+                    for result in results:
+
+                        context_parts.append(
+                            f"""
+SOURCE: Page {result['page']}
+
+{result['text']}
+"""
+                        )
+
+                    context = "\n\n".join(
+                        context_parts
+                    )
+
+                    # ----------------------------------------
+                    # RAG PROMPT
+                    # ----------------------------------------
+
+                    rag_prompt = f"""
+You are a document question-answering assistant.
+
+Answer the user's question using ONLY the
+provided document context.
+
+Rules:
+
+1. Do not invent information.
+2. Do not use outside knowledge.
+3. If the answer is not in the context,
+   say that the information is not available
+   in the uploaded document.
+4. Give a clear and concise answer.
+5. At the end, provide the source page numbers.
+
+DOCUMENT CONTEXT:
+
+{context}
+
+USER QUESTION:
+
+{question}
+
+Answer using the document context.
+
+Include a final line:
+
+Sources: Page X, Page Y
+"""
+
+                    # ----------------------------------------
+                    # GENERATE
+                    # ----------------------------------------
+
+                    with st.spinner(
+                        "Generating document answer..."
+                    ):
+
+                        answer = ask_ollama(
+                            rag_prompt,
+                            temperature=0.2
+                        )
+
+                    # ----------------------------------------
+                    # ANSWER
+                    # ----------------------------------------
+
+                    st.subheader(
+                        "🤖 Answer"
+                    )
+
+                    st.write(answer)
