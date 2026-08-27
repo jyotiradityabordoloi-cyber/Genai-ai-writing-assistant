@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # ============================================================
-# CONFIG
+# CONFIGURATION
 # ============================================================
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -14,7 +14,7 @@ MODEL_NAME = "qwen2.5:3b"
 
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
@@ -22,6 +22,17 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide"
 )
+
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "document_name" not in st.session_state:
+    st.session_state.document_name = None
 
 
 # ============================================================
@@ -73,8 +84,7 @@ def ask_ollama(prompt, temperature=0.7):
     except requests.exceptions.Timeout:
 
         return (
-            "The request took too long. "
-            "Please try again."
+            "The request took too long. Please try again."
         )
 
     except Exception as e:
@@ -122,7 +132,7 @@ def create_page_chunks(
 
 
 # ============================================================
-# BUILD DOCUMENT CHUNKS
+# PROCESS PDF
 # ============================================================
 
 def process_pdf(uploaded_file):
@@ -151,8 +161,8 @@ def process_pdf(uploaded_file):
         pages_with_text += 1
 
         page_chunks = create_page_chunks(
-            page_text=page_text,
-            page_number=page_number,
+            page_text,
+            page_number,
             chunk_size=800,
             overlap=100
         )
@@ -186,12 +196,10 @@ def cosine_similarity(
         )
     )
 
-    scores = np.dot(
+    return np.dot(
         document_embeddings,
         query_embedding
     )
-
-    return scores
 
 
 # ============================================================
@@ -231,6 +239,37 @@ def retrieve_chunks(
         )
 
     return results
+
+
+# ============================================================
+# CONVERSATION HISTORY
+# ============================================================
+
+def build_chat_history():
+
+    if not st.session_state.chat_history:
+        return "No previous conversation."
+
+    history = []
+
+    for message in st.session_state.chat_history:
+
+        role = message["role"]
+        content = message["content"]
+
+        if role == "user":
+
+            history.append(
+                f"User: {content}"
+            )
+
+        elif role == "assistant":
+
+            history.append(
+                f"Assistant: {content}"
+            )
+
+    return "\n\n".join(history)
 
 
 # ============================================================
@@ -274,8 +313,6 @@ Use:
 - Strong opening
 - Short sentences
 - Clear message
-
-Remove unnecessary explanations.
 """,
 
     "Blog Article": """
@@ -542,10 +579,6 @@ with writing_tab:
         "Transform your text for different purposes and platforms."
     )
 
-    # --------------------------------------------------------
-    # TASK
-    # --------------------------------------------------------
-
     task = st.selectbox(
         "Choose an AI task",
         [
@@ -558,10 +591,6 @@ with writing_tab:
             "Compare Prompt Quality"
         ]
     )
-
-    # --------------------------------------------------------
-    # TONE + LENGTH
-    # --------------------------------------------------------
 
     col1, col2 = st.columns(2)
 
@@ -590,19 +619,11 @@ with writing_tab:
             ]
         )
 
-    # --------------------------------------------------------
-    # INPUT
-    # --------------------------------------------------------
-
     text = st.text_area(
         "Enter your text",
         height=250,
         placeholder="Paste your text here..."
     )
-
-    # --------------------------------------------------------
-    # OPTIONAL PUBLISHING
-    # --------------------------------------------------------
 
     st.subheader("📣 Publishing / Format")
 
@@ -626,20 +647,10 @@ with writing_tab:
         ]
     )
 
-    # --------------------------------------------------------
-    # ADDITIONAL INSTRUCTION
-    # --------------------------------------------------------
-
     custom_instruction = st.text_input(
         "Additional instruction (optional)",
-        placeholder=(
-            "Example: Make it more engaging"
-        )
+        placeholder="Example: Make it more engaging"
     )
-
-    # --------------------------------------------------------
-    # GENERATE
-    # --------------------------------------------------------
 
     generate = st.button(
         "✨ Generate",
@@ -657,12 +668,12 @@ with writing_tab:
         else:
 
             prompt = build_writing_prompt(
-                task=task,
-                text=text,
-                tone=tone,
-                length=length,
-                publish_platform=publish_platform,
-                custom_instruction=custom_instruction
+                task,
+                text,
+                tone,
+                length,
+                publish_platform,
+                custom_instruction
             )
 
             with st.spinner("Generating..."):
@@ -678,7 +689,7 @@ with writing_tab:
 
 
 # ============================================================
-# DOCUMENT AI
+# DOCUMENT AI / RAG
 # ============================================================
 
 with document_tab:
@@ -686,12 +697,8 @@ with document_tab:
     st.header("📄 Document AI")
 
     st.write(
-        "Upload a PDF and ask questions about its content."
+        "Upload a PDF and have a conversation about its content."
     )
-
-    # --------------------------------------------------------
-    # UPLOAD
-    # --------------------------------------------------------
 
     uploaded_file = st.file_uploader(
         "📤 Upload a PDF",
@@ -699,6 +706,21 @@ with document_tab:
     )
 
     if uploaded_file is not None:
+
+        # ----------------------------------------------------
+        # RESET CHAT WHEN A DIFFERENT DOCUMENT IS UPLOADED
+        # ----------------------------------------------------
+
+        if (
+            st.session_state.document_name
+            != uploaded_file.name
+        ):
+
+            st.session_state.chat_history = []
+
+            st.session_state.document_name = (
+                uploaded_file.name
+            )
 
         try:
 
@@ -719,11 +741,11 @@ with document_tab:
 
             chunks = []
 
-        # ----------------------------------------------------
-        # DOCUMENT
-        # ----------------------------------------------------
-
         if chunks:
+
+            # ------------------------------------------------
+            # DOCUMENT STATS
+            # ------------------------------------------------
 
             col1, col2, col3 = st.columns(3)
 
@@ -747,27 +769,6 @@ with document_tab:
                     "Text Chunks",
                     len(chunks)
                 )
-
-            # ------------------------------------------------
-            # VIEW CHUNKS
-            # ------------------------------------------------
-
-            with st.expander(
-                "📦 View document chunks"
-            ):
-
-                for i, chunk in enumerate(chunks):
-
-                    st.markdown(
-                        f"**Chunk {i + 1} — Page "
-                        f"{chunk['page']}**"
-                    )
-
-                    st.write(
-                        chunk["text"]
-                    )
-
-                    st.divider()
 
             # ------------------------------------------------
             # EMBEDDINGS
@@ -797,183 +798,246 @@ with document_tab:
             )
 
             # ------------------------------------------------
-            # QUESTION
+            # CLEAR CHAT
             # ------------------------------------------------
 
-            st.divider()
-
-            st.subheader(
-                "🔎 Ask Your Document"
+            col1, col2 = st.columns(
+                [5, 1]
             )
 
-            question = st.text_input(
-                "Ask a question about the PDF",
-                placeholder=(
-                    "Example: What is the main topic "
-                    "of this document?"
-                )
-            )
+            with col2:
 
-            top_k = st.slider(
-                "Number of relevant chunks",
-                min_value=1,
-                max_value=min(5, len(chunks)),
-                value=min(3, len(chunks))
-            )
+                if st.button("🗑️ Clear Chat"):
 
-            ask_question = st.button(
-                "🔍 Search & Answer",
-                type="primary"
-            )
+                    st.session_state.chat_history = []
 
-            if ask_question:
+                    st.rerun()
 
-                if not question.strip():
+            # ------------------------------------------------
+            # CHAT HISTORY
+            # ------------------------------------------------
 
-                    st.warning(
-                        "Please enter a question."
-                    )
+            if st.session_state.chat_history:
 
-                else:
+                st.subheader("💬 Conversation")
 
-                    # ----------------------------------------
-                    # RETRIEVAL
-                    # ----------------------------------------
+                for message in (
+                    st.session_state.chat_history
+                ):
 
-                    with st.spinner(
-                        "Searching the document..."
+                    with st.chat_message(
+                        message["role"]
                     ):
 
-                        results = retrieve_chunks(
-                            question,
-                            chunks,
-                            embeddings,
-                            top_k
+                        st.write(
+                            message["content"]
                         )
 
-                    # ----------------------------------------
-                    # SOURCES
-                    # ----------------------------------------
+                        if (
+                            message["role"]
+                            == "assistant"
+                            and "sources"
+                            in message
+                        ):
 
-                    st.subheader(
-                        "📚 Retrieved Sources"
+                            sources = message[
+                                "sources"
+                            ]
+
+                            if sources:
+
+                                st.caption(
+                                    "Sources: "
+                                    + ", ".join(
+                                        f"Page {page}"
+                                        for page in sources
+                                    )
+                                )
+
+            # ------------------------------------------------
+            # CHAT INPUT
+            # ------------------------------------------------
+
+            question = st.chat_input(
+                "Ask a question about your document..."
+            )
+
+            if question:
+
+                # --------------------------------------------
+                # SHOW USER QUESTION
+                # --------------------------------------------
+
+                with st.chat_message("user"):
+
+                    st.write(question)
+
+                # --------------------------------------------
+                # SAVE USER QUESTION
+                # --------------------------------------------
+
+                st.session_state.chat_history.append(
+                    {
+                        "role": "user",
+                        "content": question
+                    }
+                )
+
+                # --------------------------------------------
+                # RETRIEVE RELEVANT CHUNKS
+                # --------------------------------------------
+
+                with st.spinner(
+                    "Searching the document..."
+                ):
+
+                    results = retrieve_chunks(
+                        question,
+                        chunks,
+                        embeddings,
+                        top_k=3
                     )
 
-                    source_pages = sorted(
-                        set(
-                            result["page"]
-                            for result in results
-                        )
+                # --------------------------------------------
+                # BUILD DOCUMENT CONTEXT
+                # --------------------------------------------
+
+                context_parts = []
+
+                for result in results:
+
+                    context_parts.append(
+                        f"""
+SOURCE: Page {result['page']}
+
+{result['text']}
+"""
                     )
 
-                    st.write(
-                        "Relevant pages: "
+                context = "\n\n".join(
+                    context_parts
+                )
+
+                # --------------------------------------------
+                # PREVIOUS CONVERSATION
+                # --------------------------------------------
+
+                conversation = build_chat_history()
+
+                # --------------------------------------------
+                # RAG + MEMORY PROMPT
+                # --------------------------------------------
+
+                rag_prompt = f"""
+You are a document question-answering assistant.
+
+Answer the user's question using ONLY the
+provided document context.
+
+You also have access to the previous conversation
+to understand references and follow-up questions.
+
+RULES:
+
+1. Use the document context as the source of truth.
+2. Do not invent information.
+3. Do not use outside knowledge.
+4. Use previous conversation only to understand
+   what the user is referring to.
+5. If the requested information is not available
+   in the document context, say:
+   "The information is not available in the uploaded document."
+6. Give a clear and concise answer.
+7. At the end, provide the relevant source pages.
+
+PREVIOUS CONVERSATION:
+
+{conversation}
+
+CURRENT DOCUMENT CONTEXT:
+
+{context}
+
+CURRENT USER QUESTION:
+
+{question}
+
+Answer the user's current question.
+
+End with:
+
+Sources: Page X, Page Y
+"""
+
+                # --------------------------------------------
+                # GENERATE ANSWER
+                # --------------------------------------------
+
+                with st.spinner(
+                    "Generating answer..."
+                ):
+
+                    answer = ask_ollama(
+                        rag_prompt,
+                        temperature=0.2
+                    )
+
+                # --------------------------------------------
+                # SOURCE PAGES
+                # --------------------------------------------
+
+                source_pages = sorted(
+                    set(
+                        result["page"]
+                        for result in results
+                    )
+                )
+
+                # --------------------------------------------
+                # SHOW ANSWER
+                # --------------------------------------------
+
+                with st.chat_message("assistant"):
+
+                    st.write(answer)
+
+                    st.caption(
+                        "Sources: "
                         + ", ".join(
                             f"Page {page}"
                             for page in source_pages
                         )
                     )
 
-                    # ----------------------------------------
-                    # RETRIEVED CHUNKS
-                    # ----------------------------------------
+                # --------------------------------------------
+                # SAVE ANSWER
+                # --------------------------------------------
 
-                    with st.expander(
-                        "View retrieved content"
-                    ):
+                st.session_state.chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": answer,
+                        "sources": source_pages
+                    }
+                )
 
-                        for result in results:
+            # ------------------------------------------------
+            # VIEW CHUNKS
+            # ------------------------------------------------
 
-                            st.markdown(
-                                f"**Page "
-                                f"{result['page']}**"
-                            )
+            with st.expander(
+                "📦 View document chunks"
+            ):
 
-                            st.caption(
-                                f"Similarity score: "
-                                f"{result['score']:.3f}"
-                            )
+                for i, chunk in enumerate(chunks):
 
-                            st.write(
-                                result["text"]
-                            )
-
-                            st.divider()
-
-                    # ----------------------------------------
-                    # BUILD CONTEXT
-                    # ----------------------------------------
-
-                    context_parts = []
-
-                    for result in results:
-
-                        context_parts.append(
-                            f"""
-SOURCE: Page {result['page']}
-
-{result['text']}
-"""
-                        )
-
-                    context = "\n\n".join(
-                        context_parts
+                    st.markdown(
+                        f"**Chunk {i + 1} — "
+                        f"Page {chunk['page']}**"
                     )
 
-                    # ----------------------------------------
-                    # RAG PROMPT
-                    # ----------------------------------------
-
-                    rag_prompt = f"""
-You are a document question-answering assistant.
-
-Answer the user's question using ONLY the
-provided document context.
-
-Rules:
-
-1. Do not invent information.
-2. Do not use outside knowledge.
-3. If the answer is not in the context,
-   say that the information is not available
-   in the uploaded document.
-4. Give a clear and concise answer.
-5. At the end, provide the source page numbers.
-
-DOCUMENT CONTEXT:
-
-{context}
-
-USER QUESTION:
-
-{question}
-
-Answer using the document context.
-
-Include a final line:
-
-Sources: Page X, Page Y
-"""
-
-                    # ----------------------------------------
-                    # GENERATE
-                    # ----------------------------------------
-
-                    with st.spinner(
-                        "Generating document answer..."
-                    ):
-
-                        answer = ask_ollama(
-                            rag_prompt,
-                            temperature=0.2
-                        )
-
-                    # ----------------------------------------
-                    # ANSWER
-                    # ----------------------------------------
-
-                    st.subheader(
-                        "🤖 Answer"
+                    st.write(
+                        chunk["text"]
                     )
 
-                    st.write(answer)
+                    st.divider()
