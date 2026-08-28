@@ -625,32 +625,32 @@ with writing_tab:
         placeholder="Paste your text here..."
     )
 
-    st.subheader("📣 Publishing / Format")
+    with st.expander("📣 Publishing & format — Optional"):
 
-    st.caption(
-        "Optional — choose a platform only if you want "
-        "the output optimized for it."
-    )
+        st.caption(
+            "Choose a platform only when you want the output "
+            "optimized for a specific format."
+        )
 
-    publish_platform = st.selectbox(
-        "Where will you publish this? (Optional)",
-        [
-            "No specific platform",
-            "LinkedIn Post",
-            "Instagram Caption",
-            "X (Twitter) Post",
-            "Blog Article",
-            "Email",
-            "YouTube Description",
-            "Product Description",
-            "Professional / Business Writing"
-        ]
-    )
+        publish_platform = st.selectbox(
+            "Where will you publish this?",
+            [
+                "No specific platform",
+                "LinkedIn Post",
+                "Instagram Caption",
+                "X (Twitter) Post",
+                "Blog Article",
+                "Email",
+                "YouTube Description",
+                "Product Description",
+                "Professional / Business Writing"
+            ]
+        )
 
-    custom_instruction = st.text_input(
-        "Additional instruction (optional)",
-        placeholder="Example: Make it more engaging"
-    )
+        custom_instruction = st.text_input(
+            "Additional instruction — Optional",
+            placeholder="Example: Make it more engaging and concise"
+        )
 
     generate = st.button(
         "✨ Generate",
