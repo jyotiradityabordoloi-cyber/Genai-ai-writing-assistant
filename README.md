@@ -1,140 +1,71 @@
-🤖 GenAI AI Writing Assistant
-
-
-
-> A locally hosted Generative AI writing assistant powered by \*\*Qwen2.5 3B + Ollama\*\*, designed to demonstrate practical prompt engineering and LLM application development.
-
-
-
-!\[Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)
-
-!\[Ollama](https://img.shields.io/badge/Ollama-Local\_LLM-black)
-
-!\[Qwen](https://img.shields.io/badge/Qwen2.5-3B-purple)
-
-!\[GenAI](https://img.shields.io/badge/Generative\_AI-Project-orange)
-
-!\[Status](https://img.shields.io/badge/Status-Learning\_Project-green)
-
-
-
-\---
-
-
-
-🎯 Project Overview
-
-
-
-The \*\*GenAI AI Writing Assistant\*\* is a local AI application that allows users to transform text using different AI-powered writing tasks.
-
-
-
-Instead of using a cloud API, the project runs \*\*Qwen2.5 3B locally through Ollama\*\*.
-
-
-
-The project is also designed as a learning platform for understanding how modern GenAI applications are built.
-
-
-
-Current capabilities
-
-
-
-\- 📝 Summarize text
-
-\- 🎓 Explain text
-
-\- ✍️ Rewrite text
-
-\- 💼 Make text professional
-
-\- 🧩 Simplify complex text
-
-\- 🔑 Extract key points
-
-\- 🧪 Compare basic vs structured prompts
-
-
-
-📸 Application Preview
-
-
-
-\## Main Menu
-
-
-
-!\[AI Writing Assistant Menu](screenshots/main-menu.png)
-
-
-
-\---
-
-
-
-✨ Features
-
-
-
-| Feature | Description |
-
-|---|---|
-
-| 📝 Summarize | Convert long text into concise bullet points |
-
-| 🎓 Explain | Explain content using beginner-friendly language |
-
-| ✍️ Rewrite | Improve grammar, clarity and readability |
-
-| 💼 Professional | Convert text into professional business language |
-
-| 🧩 Simplify | Rewrite complex text using simpler language |
-
-| 🔑 Key Points | Extract important facts and decisions |
-
-| 🧪 Prompt Lab | Compare basic and structured prompting |
-
-
-
-\---
-
-
-
-🧠 Prompt Engineering
-
-
-
-One of the main goals of this project is to understand how \*\*prompt design affects LLM output\*\*.
-
-
-
-The application uses a structured prompt architecture:
-
-
-
-&#x20;text
-
-&#x20;               ROLE
-
-&#x20;                ↓
-
-&#x20;               TASK
-
-&#x20;                ↓
-
-&#x20;           REQUIREMENTS
-
-&#x20;                ↓
-
-&#x20;            USER TEXT
-
-&#x20;                ↓
-
-&#x20;               LLM
-
-&#x20;                ↓
-
-&#x20;            RESPONSE
+# ✦ GenAI Writing Assistant
+
+> A local AI-powered writing and document intelligence application combining
+> content generation, PDF-based Retrieval-Augmented Generation (RAG),
+> conversational memory, and RAG evaluation.
+
+![Python](https://img.shields.io/badge/Python-3.x-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-UI-red)
+![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black)
+![RAG](https://img.shields.io/badge/AI-RAG-purple)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+---
+
+## 🚀 Overview
+
+GenAI Writing Assistant is a local-first AI application designed to solve
+two common problems:
+
+1. **Creating and transforming written content**
+2. **Understanding information inside PDF documents**
+
+The application combines a traditional AI writing workflow with a
+Retrieval-Augmented Generation (RAG) pipeline.
+
+Users can:
+
+- Rewrite and improve content
+- Summarize text
+- Change tone
+- Expand content
+- Extract key points
+- Analyze prompt quality
+- Optimize content for different publishing formats
+- Upload PDF documents
+- Ask questions about documents
+- Retrieve relevant document sections
+- Receive answers grounded in the uploaded document
+- See the source pages used for answers
+- Continue conversations with document context
+- Evaluate RAG performance
+
+The application runs locally using **Ollama**, reducing dependency on
+paid cloud LLM APIs during development.
+
+---
+
+# 🎯 Product Goal
+
+The goal was not simply to build a chatbot.
+
+The goal was to design a practical AI assistant that demonstrates how
+Generative AI can improve an existing writing and knowledge workflow.
+
+### Original Workflow
+
+A typical workflow looks like:
+
+```text
+Write content
+      ↓
+Manually rewrite / summarize
+      ↓
+Search documents manually
+      ↓
+Find relevant information
+      ↓
+Read multiple pages
+      ↓
+Write an answer manually
 
